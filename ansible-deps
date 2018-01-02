@@ -1,0 +1,83 @@
+#!/usr/bin/env ruby
+
+require 'term/ansicolor'
+require 'yaml'
+
+# monkey-patching string class for easy colors
+class String
+  include Term::ANSIColor
+end
+
+PATH = ARGV.first || '.'
+
+def requirements?(path)
+  File.basename(path) == 'requirements.yml'
+end
+
+def find_requirements(path)
+  Dir[path + '/**/requirements.yml']
+end
+
+def find_meta(path)
+  Dir[path + '/**/meta/main.yml']
+end
+
+def find_files(path)
+  find_requirements(path) + find_meta(path)
+end
+
+def get_roles(path)
+  if requirements? path
+    YAML.load_file(path)
+  else
+    YAML.load_file(path)['dependencies']
+  end
+end
+
+def current_tag(role)
+  role['tag']
+end
+
+def latest_tag(role)
+  `
+    git ls-remote --tags --refs #{role['src']} |
+      awk '{ print $2 }' |
+      cut -d / -f 3 |
+      sort -V |
+      tail -n 1
+  `.chomp
+end
+
+def latest_tag?(role)
+  current_tag(role) == latest_tag(role)
+end
+
+def outdated_roles(roles)
+  roles.reject { |role| latest_tag? role }
+       .map { |role| role['name'] }
+end
+
+def check_roles(path)
+  roles = get_roles(path)
+  outdated = roles.nil? ? [] : outdated_roles(roles)
+
+  printf "#{path}: ".blue
+
+  if outdated.empty?
+    puts 'ok'.green
+  else
+    puts 'not ok'.red
+    outdated.each { |role| puts "    #{role}".yellow }
+    printf "\n"
+  end
+end
+
+if File.directory? PATH
+  find_files(PATH).each do |path|
+    check_roles path
+  end
+elsif File.file? PATH
+  check_roles PATH
+else
+  abort 'invalid path supplied'.red
+end
